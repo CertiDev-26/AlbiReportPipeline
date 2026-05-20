@@ -126,11 +126,18 @@ def _parse_dt(raw):
         return None
 
 
+def _strftime_no_pad(dt, fmt):
+    # %-d / %-m / %-I strip leading zeros on Linux; %#d / %#m / %#I on Windows
+    if sys.platform == "win32":
+        fmt = fmt.replace("%-", "%#")
+    return dt.strftime(fmt)
+
+
 def _fmt_date(raw):
     dt = _parse_dt(raw)
     if not dt:
         return None
-    return dt.strftime("%-m/%-d/%Y")
+    return _strftime_no_pad(dt, "%-m/%-d/%Y")
 
 
 def _is_included(p):
@@ -206,7 +213,7 @@ def _aging_audit(p):
     else:
         grade = "green"
 
-    status_date_fmt = status_dt.strftime("%-m/%-d/%Y")
+    status_date_fmt = _strftime_no_pad(status_dt, "%-m/%-d/%Y")
     audit_text = (
         f"Aging: {_fmt_hours(hours_in_stage)} in status \"{_h(status)}\" "
         f"(since {status_date_fmt}, {source}). "
@@ -1217,7 +1224,7 @@ def _build_html(projects, style="1"):
     for p in included:
         grade_groups[_aging_audit(p)[1]].append(p)
 
-    generated = datetime.now().strftime("%B %-d, %Y %-I:%M %p")
+    generated = _strftime_no_pad(datetime.now(), "%B %-d, %Y %-I:%M %p")
 
     grade_counts = {
         grade: sum(1 for p in included if _aging_audit(p)[1] == grade)
@@ -1860,8 +1867,8 @@ def main():
     parser.set_defaults(style="1")
     parser.add_argument("--api", action="store_true",
                         help="Pull live data from Albi API instead of local saved/ files")
-    parser.add_argument("--out", default="report.html",
-                        help="Output filename (default: report.html)")
+    parser.add_argument("--out", default=datetime.now().strftime("%m%d%y") + "Report.html",
+                        help="Output filename (default: mmddyyReport.html)")
     parser.add_argument("--style", choices=sorted(STYLE_LABELS),
                         help="Visual style number: 1 clean, 2 dark, 3 audit, 4 tech")
     parser.add_argument("-1", action="store_const", const="1", dest="style",
@@ -1888,7 +1895,9 @@ def main():
         flush=True,
     )
 
-    out_path = os.path.join(_BASE, args.out)
+    reports_dir = os.path.join(_BASE, "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    out_path = os.path.join(reports_dir, args.out)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(_build_html(projects, style=args.style))
 

@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import report
@@ -96,7 +97,7 @@ def run_report(output_file, style):
 
 
 def open_report(output_file):
-    subprocess.run(["open", str(BASE_DIR / output_file)], check=False)
+    subprocess.run(["open", str(BASE_DIR / "reports" / output_file)], check=False)
 
 
 def main():
@@ -106,8 +107,8 @@ def main():
     parser.set_defaults(style="1")
     parser.add_argument(
         "--out",
-        default="report.html",
-        help="Output report filename passed to report.py (default: report.html)",
+        default=datetime.now().strftime("%m%d%y") + "Report.html",
+        help="Output report filename (default: mmddyyReport.html)",
     )
     parser.add_argument(
         "--style",
