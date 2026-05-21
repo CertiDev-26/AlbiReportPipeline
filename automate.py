@@ -2,12 +2,18 @@
 """Refresh saved Albi project data, then generate the HTML report."""
 
 import argparse
+import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 import report
 import search
@@ -15,6 +21,38 @@ import search
 
 BASE_DIR = Path(__file__).resolve().parent
 SAVE_DIR = BASE_DIR / "saved"
+LOG_DIR  = BASE_DIR / "logs"
+
+# Load email.py without shadowing stdlib's email package
+_email_spec = importlib.util.spec_from_file_location("albi_email", BASE_DIR / "mailer.py")
+_email_mod = importlib.util.module_from_spec(_email_spec)
+_email_spec.loader.exec_module(_email_mod)
+
+
+class _Tee:
+    """Write to multiple streams at once (e.g. stdout + log file)."""
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for s in self._streams:
+            s.write(data)
+
+    def flush(self):
+        for s in self._streams:
+            s.flush()
+
+
+def _setup_logging():
+    LOG_DIR.mkdir(exist_ok=True)
+    log_path = LOG_DIR / (datetime.now().strftime("%m%d%y") + ".log")
+    log_file = open(log_path, "a", encoding="utf-8")
+    header = f"\n{'='*60}\nRun started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{'='*60}\n"
+    log_file.write(header)
+    log_file.flush()
+    sys.stdout = _Tee(sys.__stdout__, log_file)
+    sys.stderr = _Tee(sys.__stderr__, log_file)
+    return log_file
 
 
 def _safe_dir_name(value):
@@ -100,7 +138,40 @@ def open_report(output_file):
     subprocess.run(["open", str(BASE_DIR / "reports" / output_file)], check=False)
 
 
+CF_PROJECT = "hostreports"
+WRANGLER   = r"C:\Users\jackson\AppData\Roaming\npm\wrangler.cmd"
+
+
+def deploy_report():
+    token = os.environ.get("Cloudflare_API_TOKEN")
+    if not token:
+        print("WARNING: Cloudflare_API_TOKEN not set — skipping Cloudflare deploy.", flush=True)
+        return
+
+    reports_dir = str(BASE_DIR / "reports")
+    cmd = [WRANGLER, "pages", "deploy", reports_dir, f"--project-name={CF_PROJECT}"]
+    env = {**os.environ, "CLOUDFLARE_API_TOKEN": token,
+           "CLOUDFLARE_ACCOUNT_ID": os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")}
+    print(f"Deploying reports/ to Cloudflare Pages ({CF_PROJECT})...", flush=True)
+    result = subprocess.run(cmd, env=env, cwd=str(BASE_DIR), capture_output=True,
+                            encoding="utf-8", errors="replace")
+    combined = (result.stdout or "") + (result.stderr or "")
+
+    # wrangler prints the snapshot URL as: https://<hash>.hostreports.pages.dev
+    match = re.search(r"https://[a-z0-9\-]+\.hostreports\.pages\.dev\S*", combined)
+    if result.returncode == 0:
+        snapshot_url = match.group(0).rstrip(".") if match else f"https://{CF_PROJECT}.pages.dev"
+        print(f"  Deployed snapshot: {snapshot_url}", flush=True)
+        return snapshot_url
+    else:
+        print(combined, flush=True)
+        print(f"  WARNING: wrangler exited with code {result.returncode}", flush=True)
+        return None
+
+
 def main():
+    _setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Refresh Albi project data and generate report.html."
     )
@@ -146,6 +217,11 @@ def main():
     )
 
     run_report(args.out, args.style)
+    snapshot_url = deploy_report()
+
+    report_url = f"{snapshot_url}/{args.out}" if snapshot_url else None
+    print("Sending report email...", flush=True)
+    _email_mod.send_report_link(report_url, args.out)
 
     if args.open_output:
         open_report(args.out)

@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Send the Albi daily report link via Gmail API."""
+
+import base64
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from dotenv import load_dotenv
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION — edit anything in this section
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Who receives the report link in the To: field
+RECIPIENTS = [
+    "jackson@certidry.com",
+    "mathew@certidry.com"
+]
+
+# CC recipients — empty list to skip
+CC_RECIPIENTS = []
+
+# BCC recipients — empty list to skip
+BCC_RECIPIENTS = []
+
+# "group"      → one email, all RECIPIENTS listed in To: together
+# "individual" → separate email sent to each person in RECIPIENTS
+SEND_MODE = "individual"
+
+# Automatically CC the sender's own Gmail address on every send
+CC_SELF = False
+
+# Subject line tokens: {date} → "May 20, 2026"  |  {filename} → "052026Report.html"
+SUBJECT_TEMPLATE = "Albi Daily Report — {date}"
+
+# Display name shown as the sender in the inbox
+SENDER_NAME = "Albi Report Pipeline"
+
+# Reply-To address — None means replies go back to the sender's Gmail
+REPLY_TO = None  # e.g. "someone@company.com"
+
+# Your Gmail address (used for From: header and CC_SELF).
+# Must match the account the OAuth token was issued for.
+SENDER_EMAIL = "jaxf2005@gmail.com"
+
+# Master on/off switch — False skips all sending without error
+EMAIL_ENABLED = True
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INTERNALS — no need to edit below this line
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fmt_date(dt):
+    fmt = "%B %#d, %Y" if sys.platform == "win32" else "%B %-d, %Y"
+    return dt.strftime(fmt)
+
+
+def _build_service():
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ["GMAIL_REFRESH_TOKEN"],
+        client_id=os.environ["GMAIL_CLIENT_ID"],
+        client_secret=os.environ["GMAIL_CLIENT_SECRET"],
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=["https://www.googleapis.com/auth/gmail.send"],
+    )
+    creds.refresh(Request())
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def _html_body(report_url, report_filename, date_str):
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f0f0f4;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f0f4;padding:36px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0"
+             style="background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.10);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:#0f172a;padding:32px 40px;">
+            <p style="margin:0;color:#94a3b8;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;">Albi Report Pipeline</p>
+            <h1 style="margin:8px 0 0;color:#f8fafc;font-size:24px;font-weight:700;letter-spacing:-0.3px;">Daily Report Ready</h1>
+            <p style="margin:8px 0 0;color:#64748b;font-size:14px;">{date_str}</p>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:40px 40px 32px;">
+            <p style="margin:0 0 28px;color:#374151;font-size:15px;line-height:1.7;">
+              Your daily Albi job status report has been generated and deployed.
+              Click below to view the latest report in your browser.
+            </p>
+
+            <!-- Button -->
+            <table cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+              <tr>
+                <td style="border-radius:7px;background:#4f46e5;">
+                  <a href="{report_url}"
+                     style="display:inline-block;padding:14px 30px;color:#ffffff;font-size:15px;
+                            font-weight:600;text-decoration:none;letter-spacing:0.2px;">
+                    View Report &rarr;
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Plain URL fallback -->
+            <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">
+              If the button doesn&rsquo;t open, copy this link:<br>
+              <a href="{report_url}" style="color:#4f46e5;text-decoration:none;word-break:break-all;">{report_url}</a>
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8fafc;padding:18px 40px;border-top:1px solid #e2e8f0;">
+            <p style="margin:0;color:#94a3b8;font-size:12px;">
+              Generated by Albi Report Pipeline &bull; {report_filename}
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+
+def _encode_header(value):
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return f"=?utf-8?b?{encoded}?="
+
+
+def _build_raw(from_addr, to_list, cc_list, bcc_list, subject, html):
+    headers = [f"From: {SENDER_NAME} <{from_addr}>", f"To: {', '.join(to_list)}"]
+    if cc_list:
+        headers.append(f"Cc: {', '.join(cc_list)}")
+    if bcc_list:
+        headers.append(f"Bcc: {', '.join(bcc_list)}")
+    if REPLY_TO:
+        headers.append(f"Reply-To: {REPLY_TO}")
+    headers += [
+        f"Subject: {_encode_header(subject)}",
+        "MIME-Version: 1.0",
+        'Content-Type: text/html; charset="utf-8"',
+        "Content-Transfer-Encoding: base64",
+        "",
+        base64.b64encode(html.encode("utf-8")).decode("ascii"),
+    ]
+    raw = "\r\n".join(headers)
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def send_report_link(report_url, report_filename):
+    if not EMAIL_ENABLED:
+        print("  Email disabled — skipping.", flush=True)
+        return
+
+    if not report_url:
+        print("  WARNING: No report URL — skipping email.", flush=True)
+        return
+
+    try:
+        service = _build_service()
+    except KeyError as e:
+        print(f"  WARNING: Missing Gmail env var {e} — skipping email.", flush=True)
+        return
+
+    sender_email = SENDER_EMAIL
+    date_str = _fmt_date(datetime.now())
+    subject = SUBJECT_TEMPLATE.format(date=date_str, filename=report_filename)
+    html = _html_body(report_url, report_filename, date_str)
+
+    cc = list(CC_RECIPIENTS)
+    if CC_SELF and sender_email not in cc:
+        cc.append(sender_email)
+    bcc = list(BCC_RECIPIENTS)
+
+    def _send(to_list):
+        raw = _build_raw(sender_email, to_list, cc, bcc, subject, html)
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
+
+    if SEND_MODE == "individual":
+        for recipient in RECIPIENTS:
+            _send([recipient])
+            print(f"  Email sent → {recipient}", flush=True)
+    else:
+        _send(list(RECIPIENTS))
+        print(f"  Email sent → {len(RECIPIENTS)} recipient(s)", flush=True)
