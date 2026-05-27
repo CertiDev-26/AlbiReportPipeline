@@ -88,7 +88,11 @@ def refresh_saved_projects(fetch_files=True):
 
         stats["companies"] += 1
         print(f"Fetching {company_name}...", flush=True)
-        projects = search.get_all_projects(api_key)
+        try:
+            projects = search.get_all_projects(api_key)
+        except Exception as exc:
+            print(f"  ERROR: skipping {company_name} — could not fetch projects: {exc}", flush=True)
+            continue
         print(f"  {len(projects)} project(s)", flush=True)
         contacts = []
         if report._needs_referrer_company_enrichment(projects):
