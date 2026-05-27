@@ -139,7 +139,8 @@ def open_report(output_file):
 
 
 CF_PROJECT = "hostreports"
-WRANGLER   = r"C:\Users\jackson\AppData\Roaming\npm\wrangler.cmd"
+WRANGLER   = (r"C:\Users\jackson\AppData\Roaming\npm\wrangler.cmd"
+              if sys.platform == "win32" else "wrangler")
 
 
 def deploy_report():
