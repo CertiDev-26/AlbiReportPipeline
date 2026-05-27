@@ -38,7 +38,7 @@ def _get_all_paged(endpoint, api_key):
     page = 1
     while True:
         data = get(endpoint, api_key, params={"page": page, "pageSize": 100})
-        batch = data if isinstance(data, list) else data.get("data", [])
+        batch = data if isinstance(data, list) else (data.get("data", []) if isinstance(data, dict) else [])
         if not batch:
             break
         records.extend(batch)

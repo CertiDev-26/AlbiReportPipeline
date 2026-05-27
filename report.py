@@ -148,6 +148,8 @@ def _is_included(p):
         return False
     if (p.get("status") or "").strip().lower() in EXCLUDED_STATUSES:
         return False
+    if "test" in (p.get("customerName") or "").lower():
+        return False
     dt = _parse_dt(p.get("createdAt"))
     return bool(dt and dt >= CUTOFF_DATE)
 
@@ -573,6 +575,7 @@ def _load_local():
         cp = os.path.join(SAVE_DIR, company_dir)
         if not os.path.isdir(cp):
             continue
+        batch = []
         for project_dir in sorted(os.listdir(cp)):
             pj = os.path.join(cp, project_dir, "project.json")
             if not os.path.exists(pj):
@@ -588,10 +591,11 @@ def _load_local():
                 else:
                     project[FILE_MANIFEST_KEY] = []
                     project[FILE_MANIFEST_MISSING_KEY] = True
-                projects.append(project)
+                batch.append(project)
             except Exception as e:
                 print(f"  WARNING: {pj}: {e}")
-    enrich_referrer_companies(projects)
+        enrich_referrer_companies(batch)
+        projects.extend(batch)
     return projects
 
 
@@ -603,7 +607,7 @@ def _fetch_project_files(search, api_key, project_id):
                           params={"projectId": project_id, "page": page, "pageSize": 100})
         if not data:
             break
-        batch = data if isinstance(data, list) else data.get("data", [])
+        batch = data if isinstance(data, list) else (data.get("data", []) if isinstance(data, dict) else [])
         if not batch:
             break
         files.extend(batch)
